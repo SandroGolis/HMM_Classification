@@ -14,7 +14,6 @@ def get_sparse_vector(fnames, map_name_to_id):
 
 
 def add_count(dict, from_val, to_val):
-    if from_val is None or to_val is None: return
     if from_val not in dict:
         dict[from_val] = {to_val: 1}
     elif to_val not in dict[from_val]:
@@ -36,6 +35,19 @@ def init_table(table, count_dict, row_lookup, col_lookup):
             table[row, col] = count_dict[key1][key2] + 1  # smoothing
 
 
+def count_starting_state(dict, state):
+    if state not in dict:
+        dict[state] = 1
+    else:
+        dict[state] += 1
+
+
+def init_first_observ_table(table, count_dict, col_lookup):
+    for key in count_dict.iterkeys():
+        col = col_lookup[key]
+        table[col] = count_dict[key]
+
+
 class HMM(Classifier):
 
     def __init__(self, new_model=None):
@@ -44,13 +56,15 @@ class HMM(Classifier):
         self.state_to_id = {}
         self.feature_count_table = np.zeros((1, 1))
         self.transition_count_table = np.zeros((1, 1))
+        self.first_observ_count_table = np.zeros(1)
         self.emission_matrix = np.zeros((1, 1))
         self.transition_matrix = np.zeros((1, 1))
+        self.first_observ_matrix = np.zeros(1)
 
 
     def _collect_counts(self, instance_list):
         """
-            The function initislizes 2 tables:
+            The function initislizes 3 tables:
             1. self.transition_count_table -  dimension: num_states X num_states
                A(i,j) = number of i->j transitions for sample DB
 
@@ -88,9 +102,21 @@ class HMM(Classifier):
             dictionaries in the same way in init_table function)
 
             Smoothing is done by adding 1 to each cell in the matrices.
+
+            3. self.first_observ_count_table -  dimension: 1 X num_states
+               C(i) = number of times State_i abbears in the beginning of the sequence
+
+                    |  STATE_1  |  STATE_2  |  ... |  STATE_N  |
+                    |-----------|-----------|------|-----------|
+                    |   C(1)    |    C(2)   |  ... |    C(N)   |
+                    |-----------|-----------|------|-----------|
+
+            This table is used to determine the probabilities of starting the
+            hidden state sequence at a particular state.
         """
         trans_count = {}
         observ_count = {}
+        first_state_count = {}
 
         for instance in instance_list:
             prev_state = None
@@ -100,7 +126,10 @@ class HMM(Classifier):
             for i in xrange(len(features)):
                 cur_state = instance.label[i]
                 update_map(self.state_to_id, cur_state)
-                add_count(trans_count, prev_state, cur_state)
+                if prev_state is None:
+                    count_starting_state(first_state_count, cur_state)
+                else:
+                    add_count(trans_count, prev_state, cur_state)
                 prev_state = cur_state
 
                 current_observ = features[i]
@@ -112,12 +141,15 @@ class HMM(Classifier):
 
         num_states = len(self.state_to_id)
         num_observ = len(self.observ_to_id)
-        # initialized with ones for smoothing purpose
+        # init transition and feature count tables with ones for smoothing purpose
         self.transition_count_table = np.ones((num_states, num_states))
         self.feature_count_table = np.ones((num_observ, num_states))
+        self.first_observ_count_table = np.zeros(num_states)
 
         init_table(self.transition_count_table, trans_count, self.state_to_id, self.state_to_id)
         init_table(self.feature_count_table, observ_count, self.observ_to_id, self.state_to_id)
+        init_first_observ_table(self.first_observ_count_table, first_state_count, self.state_to_id)
+
 
 
     def train(self, instance_list, ):
@@ -177,9 +209,15 @@ class HMM(Classifier):
             and backtrace pointers for finding the best sequence
         """
         # TODO:Initialize trellis and backtrace pointers
-        trellis = np.zeros((1, 1))
+        observ_seq_len = len(instance.features())
+        num_states = len(self.state_to_id)
+        trellis = np.zeros((observ_seq_len, num_states))
+
         backtrace_pointers = np.zeros((1, 1))
         # TODO:Traverse through the trellis here
+
+        #trelli
+
 
         return trellis, backtrace_pointers
 
@@ -248,4 +286,5 @@ class HMM(Classifier):
     def init_probability_matrices(self):
         self.transition_matrix = self.transition_count_table / self.transition_count_table.sum(axis=1, keepdims=True)
         self.emission_matrix = self.feature_count_table / self.feature_count_table.sum(axis=0, keepdims=True)
+        self.first_observ_matrix = self.first_observ_count_table / self.first_observ_count_table.sum()
 
