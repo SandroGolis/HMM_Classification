@@ -33,7 +33,7 @@ def init_table(table, count_dict, row_lookup, col_lookup):
         row = row_lookup[key1]
         for key2 in count_dict[key1].iterkeys():
             col = col_lookup[key2]
-            table[row, col] = count_dict[key1][key2]
+            table[row, col] = count_dict[key1][key2] + 1  # smoothing
 
 
 class HMM(Classifier):
@@ -79,13 +79,15 @@ class HMM(Classifier):
                      |-----------|-----------|------|-----------|
 
             This is done by creating 2 nested dictionaries.
-            One for transition_count_table, that maps: StateA -> {StateB->count}
-            (the meaning is: # times we saw transition StateA to StateB)
-            Another for feature_count_table, that maps: Observation -> {State->count}
-            (the meaning is: # times we saw emission State -> Observation)
+            trans_count for transition_count_table, that maps: StateA -> {StateB->count}
+            (the meaning is: # times we saw a transition: StateA to StateB)
 
+            observ_count for feature_count_table, that maps: Observation -> {State->count}
+            (the meaning is: # times we saw an emission: State -> Observation
+            note: the ordering is inversed for a purpose. It helps to deal with both
+            dictionaries in the same way in init_table function)
 
-
+            Smoothing is done by adding 1 to each cell in the matrices.
         """
         trans_count = {}
         observ_count = {}
@@ -110,8 +112,9 @@ class HMM(Classifier):
 
         num_states = len(self.state_to_id)
         num_observ = len(self.observ_to_id)
-        self.transition_count_table = np.zeros((num_states, num_states))
-        self.feature_count_table = np.zeros((num_observ, num_states))
+        # initialized with ones for smoothing purpose
+        self.transition_count_table = np.ones((num_states, num_states))
+        self.feature_count_table = np.ones((num_observ, num_states))
 
         init_table(self.transition_count_table, trans_count, self.state_to_id, self.state_to_id)
         init_table(self.feature_count_table, observ_count, self.observ_to_id, self.state_to_id)
@@ -133,6 +136,8 @@ class HMM(Classifier):
             Returns None
         """
         self._collect_counts(instance_list)
+        self.init_probability_matrices()
+
 
         # TODO: estimate the parameters from the count tables
 
@@ -239,4 +244,8 @@ class HMM(Classifier):
         pass
 
     model = property(get_model, set_model)
+
+    def init_probability_matrices(self):
+        self.transition_matrix = self.transition_count_table / self.transition_count_table.sum(axis=1, keepdims=True)
+        self.emission_matrix = self.feature_count_table / self.feature_count_table.sum(axis=0, keepdims=True)
 
