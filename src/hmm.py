@@ -113,6 +113,11 @@ class HMM(Classifier):
 
             This table is used to determine the probabilities of starting the
             hidden state sequence at a particular state.
+
+            Smoothng: transition and feature count tables are calculated in the way that for each count:
+                      Count = Real_Count + 1
+                      The first_observ_count_table is not being smoothed, because we want to be able to
+                      remain with possibilities that equal to 0 for certain states.
         """
         trans_count = {}
         observ_count = {}
@@ -150,8 +155,6 @@ class HMM(Classifier):
         init_table(self.feature_count_table, observ_count, self.observ_to_id, self.state_to_id)
         init_first_observ_table(self.first_observ_count_table, first_state_count, self.state_to_id)
 
-
-
     def train(self, instance_list, ):
         """
             Fit parameters for hidden markov model
@@ -169,6 +172,8 @@ class HMM(Classifier):
         """
         self._collect_counts(instance_list)
         self.init_probability_matrices()
+
+        self.compute_observation_loglikelihood(instance_list[0])
 
 
         # TODO: estimate the parameters from the count tables
@@ -198,26 +203,54 @@ class HMM(Classifier):
 
     def dynamic_programming_on_trellis(self, instance, run_forward_alg=True):
         """
-            Run Forward algorithm or Viterbi algorithm
-            This function uses the trellis to implement dynamic
-            programming algorithm for obtaining the best sequence
-            of labels given the observations
+            Executes either Forward or Viterbi algorithms.
+            1. Forward algorithm
+               The trellis is a matrix (Observed_seq_len X num_states)
+               Alpha_t(Sj) = P(O1,O2,...,Ot, q_t=State_j)
 
-            Add your docstring here explaining how you implement this function
+                     |  STATE_1  |  STATE_2  |  ... |  STATE_N  |
+                     |-----------|-----------|------|-----------|
+            OBSERV_0 | Alpha0(S1)| Alpha0(S2)|  ... |Alpha0(SN) |
+            OBSERV_1 | Alpha1(S1)| Alpha1(S2)|  ... |Alpha1(SN) |
+               .     |           |           |  ... |           |
+            OBSERV_M | AlphaM(S1)| AlphaM(S2)|  ... | AlphaM(SN)|
+                     |-----------|-----------|------|-----------|
+
+            The first row is initialized using the first_observ_matrix probabilities.
+            Each following row is computed by:
+            Row_k = (Row_(k-1) * transition_matrix) .* relevant_emission_probobilities
+
+            For example, for states B, I, O, computing Row_k = (B_k, I_k, O_k)
+
+                                           (B->B, B->I, B->O)
+            temp = (B_k-1, I_k-1, O_k-1) * (I->B, I->I, I->O) = (B'_k, I'_k, O'_k)
+                                           (O->B, O->I, O->O)
+
+            Row_k = temp .* (B->Observ_k, I->Observ_k, O->Observ_k)
+
 
             Returns trellis filled up with the forward probabilities
-            and backtrace pointers for finding the best sequence
+            and backtrace pointers for finding the best sequence.
         """
-        # TODO:Initialize trellis and backtrace pointers
         observ_seq_len = len(instance.features())
         num_states = len(self.state_to_id)
         trellis = np.zeros((observ_seq_len, num_states))
+        backtrace_pointers = np.zeros((observ_seq_len, num_states))
 
-        backtrace_pointers = np.zeros((1, 1))
-        # TODO:Traverse through the trellis here
+        if run_forward_alg:
+            # base case initialization for the first row ot the trellis.
+            # For each possible State: Alpha_0(State) = P(State)*P(Obs_0 | State)
+            first_feature_row = self.observ_to_id[instance.features()[0]]
+            trellis[0, :] = self.first_observ_matrix * self.emission_matrix[first_feature_row, :]
 
-        #trelli
+            # iteratively filling the rows of the trellis
+            for i in range(1, observ_seq_len):
+                row = self.observ_to_id[instance.features()[i]]
+                temp = np.dot(trellis[i-1, :], self.transition_matrix)
+                trellis[i, :] = temp * self.emission_matrix[row, :]
 
+        else:  # run Viterbi algorithm
+            pass
 
         return trellis, backtrace_pointers
 
