@@ -197,60 +197,69 @@ class HMM(Classifier):
         """
             Compute and return log P(X|parameters) = loglikelihood of observations
         """
-        trellis = self.dynamic_programming_on_trellis(instance, True)
+        trellis = self.dynamic_programming_on_trellis(instance, False)
         loglikelihood = 0.0
         return loglikelihood
 
     def dynamic_programming_on_trellis(self, instance, run_forward_alg=True):
         """
             Executes either Forward or Viterbi algorithms.
-            1. Forward algorithm
-               The trellis is a matrix (Observed_seq_len X num_states)
+            The trellis is a matrix (Observed_seq_len X num_states)
+            The first row is initialized using the first_observ_matrix probabilities.
+
+            1. Forward algorithm - the values in cell [t,j] in the trellis denote:
                Alpha_t(Sj) = P(O1,O2,...,Ot, q_t=State_j)
 
-                     |  STATE_1  |  STATE_2  |  ... |  STATE_N  |
-                     |-----------|-----------|------|-----------|
-            OBSERV_0 | Alpha0(S1)| Alpha0(S2)|  ... |Alpha0(SN) |
-            OBSERV_1 | Alpha1(S1)| Alpha1(S2)|  ... |Alpha1(SN) |
-               .     |           |           |  ... |           |
-            OBSERV_M | AlphaM(S1)| AlphaM(S2)|  ... | AlphaM(SN)|
-                     |-----------|-----------|------|-----------|
+               Each following row is computed by:
+               Row_k = (Row_(k-1) * transition_matrix) .* relevant_emission_probobilities
 
-            The first row is initialized using the first_observ_matrix probabilities.
-            Each following row is computed by:
-            Row_k = (Row_(k-1) * transition_matrix) .* relevant_emission_probobilities
+               For example, for states B, I, O, computing Row_k = (B_k, I_k, O_k)
 
-            For example, for states B, I, O, computing Row_k = (B_k, I_k, O_k)
+                                              (B->B, B->I, B->O)
+               temp = (B_k-1, I_k-1, O_k-1) * (I->B, I->I, I->O) = (B'_k, I'_k, O'_k)
+                                              (O->B, O->I, O->O)
 
-                                           (B->B, B->I, B->O)
-            temp = (B_k-1, I_k-1, O_k-1) * (I->B, I->I, I->O) = (B'_k, I'_k, O'_k)
-                                           (O->B, O->I, O->O)
+               Row_k = temp .* (B->Observ_k, I->Observ_k, O->Observ_k)
 
-            Row_k = temp .* (B->Observ_k, I->Observ_k, O->Observ_k)
+            2. Viterbi algorithm.
+               Instead of summation in forward algorithm (which is computed as a side effect
+               of matrix multiplication), we will use max value.
+               The computation of one value in row K (let's say, first value B_k in (B_k, I_k, O_k))
+               looks like:
+               B_k = MAX( Row_(k-1) .* transition_probabilities_to_B) * relevant_emission_probobility
 
+               Using broadcasting capability of numpy, we can compute the whole row at once,
+               by multiplying broadcasted row B_(k-1) element-by-element with transposed transition_matrix.
 
             Returns trellis filled up with the forward probabilities
-            and backtrace pointers for finding the best sequence.
+            and for Viterbi also backtrace pointers for finding the best sequence.
         """
         observ_seq_len = len(instance.features())
         num_states = len(self.state_to_id)
         trellis = np.zeros((observ_seq_len, num_states))
-        backtrace_pointers = np.zeros((observ_seq_len, num_states))
+        backtrace_pointers = np.zeros((1,1))
+
+        # base case initialization for the first row ot the trellis.
+        # For each possible State: Alpha_0(State) = P(State)*P(Obs_0 | State)
+        first_feature_row = self.observ_to_id[instance.features()[0]]
+        trellis[0, :] = self.first_observ_matrix * self.emission_matrix[first_feature_row, :]
 
         if run_forward_alg:
-            # base case initialization for the first row ot the trellis.
-            # For each possible State: Alpha_0(State) = P(State)*P(Obs_0 | State)
-            first_feature_row = self.observ_to_id[instance.features()[0]]
-            trellis[0, :] = self.first_observ_matrix * self.emission_matrix[first_feature_row, :]
-
-            # iteratively filling the rows of the trellis
             for i in range(1, observ_seq_len):
-                row = self.observ_to_id[instance.features()[i]]
                 temp = np.dot(trellis[i-1, :], self.transition_matrix)
-                trellis[i, :] = temp * self.emission_matrix[row, :]
+                emmission_row = self.observ_to_id[instance.features()[i]]
+                trellis[i, :] = temp * self.emission_matrix[emmission_row, :]
 
         else:  # run Viterbi algorithm
-            pass
+            transition_matrix = np.transpose(self.transition_matrix)
+            backtrace_pointers = np.zeros((observ_seq_len, num_states))
+            for i in range(1, observ_seq_len):
+                temp = trellis[i-1, :] * transition_matrix
+                max_values = np.max(temp, axis=1)
+                emmission_row = self.observ_to_id[instance.features()[i]]
+                trellis[i, :] = max_values * self.emission_matrix[emmission_row, :]
+
+                backtrace_pointers[i, :] = np.argmax(temp, axis=1)
 
         return trellis, backtrace_pointers
 
